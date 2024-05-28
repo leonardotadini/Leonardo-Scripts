@@ -8,8 +8,6 @@ import anndata
 random.seed(0)
 
 dataset2 = sc.read("L3V3.h5ad")
-#dataset2 = dataset.raw.to_adata()
-#dataset2 = sc.read(dataset3)
 gene_names = dataset2.var.index.tolist()
 gene2_names = dataset2.raw.var.index.tolist()
 num_cells, num_genes = dataset2.shape
@@ -84,14 +82,8 @@ raw_data = dataset2.raw.to_adata()
 dge_full = raw_data.to_df()
 sdge_full = np.dot(dge_full.T, tissue.gw)
 
-#tissue.calculate_sdge_for_all_genes()
-#sdge_full = tissue.sdge_full
-
 endingv2 = pd.DataFrame(sdge_full.T, columns=gene2_names)
 print(endingv2)
 
 ending.to_csv("finalbig.csv")
 endingv2.to_csv(("finalbigv2.csv"))
-#dataset_reconst = sc.AnnData(pd.DataFrame(sdge.T, columns=gene_names))
-#dataset_reconst.obsm["spatial"] = locations
-#dataset_reconst.write_csvs("First_Novo.csv")
