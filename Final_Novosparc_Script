@@ -1,0 +1,97 @@
+
+import novosparc
+import numpy as np
+import pandas as pd
+import scanpy as sc
+import random
+import anndata
+random.seed(0)
+
+dataset2 = sc.read("L3V3.h5ad")
+#dataset2 = dataset.raw.to_adata()
+#dataset2 = sc.read(dataset3)
+gene_names = dataset2.var.index.tolist()
+gene2_names = dataset2.raw.var.index.tolist()
+num_cells, num_genes = dataset2.shape
+print(dataset2.shape)
+print(dataset2.X)
+
+# Now data_matrix_without_nan contains no rows with NaN values
+
+num_cells = 45289  # number of cells taken in this case : 5000 should be more appropriate in our case
+sc.pp.subsample(dataset2, n_obs=num_cells)
+# Reading Target Space, using the Atlas expression
+# Creatiion of Target space by taking only the spatial columns of the Altas expression file
+# alternative A: target space available apriori
+locations = pd.read_csv("cleaned_ATLASvrealcopie.csv", sep=",")
+num_locations = 45289
+locations = locations[:num_locations][["xcoord", "ycoord", "zcoord"]].values
+print(locations)
+atlas = sc.read("cleaned_ATLASvrealcopie.csv")
+print(atlas)
+atlas_genes = atlas.var.index.tolist()
+#atlas_genes = atlas.raw.var.index.tolist()
+print(type(atlas_genes))
+print(atlas_genes)
+print(type(atlas))
+atlas.obsm["spatial"] = locations
+pl_genes = ["shg", "dpn", "elav"]
+novosparc.pl.embedding(atlas, pl_genes)
+
+#setting markers
+# params for smooth cost
+num_neighbors_s = num_neighbors_t = 5
+print(num_neighbors_t)
+# params for linear cost
+markers = list(set(atlas_genes).intersection(gene_names))
+print(markers)
+num_markers = len(markers)
+atlas_matrix = atlas.to_df()[markers].values
+print(atlas_matrix)
+markers_idx = pd.DataFrame({"markers_idx": np.arange(len(gene_names))}, index=gene_names)
+markers_to_use = np.concatenate(markers_idx.loc[markers].values)
+markers_to_use2 = markers_to_use.flatten().astype(int).tolist()
+print(markers_to_use2)
+print(markers_to_use)
+
+dge_rep = dataset2.to_df()
+
+from scipy.sparse import csc_matrix, csr_matrix
+
+# if you uncomment this, dataset.X will be stored not as sparse matrix, rather
+# as a regular numpy array. uncommenting this doesnt throw an error
+#M = dataset2.X.toarray()
+#del dataset2.X
+#dataset2.X = M
+
+# construct Tissue object
+tissue = novosparc.cm.Tissue(dataset=dataset2, locations=locations, atlas_matrix=atlas_matrix, markers_to_use=markers_to_use)
+
+tissue.setup_reconstruction(atlas_matrix=atlas_matrix,markers_to_use= markers_to_use, num_neighbors_s=num_neighbors_s, num_neighbors_t=num_neighbors_t)
+
+# compute optimal transport of cells to locations
+alpha_linear = 0.4
+epsilon = 5e-3
+tissue.reconstruct(alpha_linear=alpha_linear, epsilon=epsilon, search_epsilon=True)
+
+sdge = tissue.sdge
+
+print(sdge)
+ending = pd.DataFrame(sdge.T, columns=gene_names)
+print(ending)
+
+raw_data = dataset2.raw.to_adata()
+dge_full = raw_data.to_df()
+sdge_full = np.dot(dge_full.T, tissue.gw)
+
+#tissue.calculate_sdge_for_all_genes()
+#sdge_full = tissue.sdge_full
+
+endingv2 = pd.DataFrame(sdge_full.T, columns=gene2_names)
+print(endingv2)
+
+ending.to_csv("finalbig.csv")
+endingv2.to_csv(("finalbigv2.csv"))
+#dataset_reconst = sc.AnnData(pd.DataFrame(sdge.T, columns=gene_names))
+#dataset_reconst.obsm["spatial"] = locations
+#dataset_reconst.write_csvs("First_Novo.csv")
