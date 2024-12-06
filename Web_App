@@ -1,0 +1,246 @@
+import os
+
+os.environ['DASH_SERVER_MAX_TIMEOUT'] = '60'
+
+import dash
+from dash import dcc, html, Input, Output, State
+import pandas as pd
+import plotly.graph_objs as go
+import matplotlib.colors as mcolors
+import numpy as np
+import pandas as pd
+from google.cloud import storage
+# Configure timeout for Dash
+os.environ['DASH_SERVER_MAX_TIMEOUT'] = '60'
+
+# Function to download the CSV from Google Cloud Storage
+def download_csv_from_gcs(bucket_name, source_blob_name, destination_file_name):
+    try:
+        client = storage.Client()
+        bucket = client.get_bucket(bucket_name)
+        blob = bucket.blob(source_blob_name)
+        blob.download_to_filename(destination_file_name)
+        print(f"File {source_blob_name} downloaded to {destination_file_name}.")
+    except Exception as e:
+        print(f"Error downloading file from GCS: {e}")
+        raise
+
+# Define the file paths
+bucket_name = 'lastnovosparc'
+source_blob_name = 'lessDecimals.csv'
+destination_file_name = '/tmp/lessDecimals.csv'
+
+# Download the file
+download_csv_from_gcs(bucket_name, source_blob_name, destination_file_name)
+
+chunk_size = 5000  # Adjust based on available memory
+chunks = pd.read_csv(destination_file_name, chunksize=chunk_size)
+
+# Combine all chunks into a single DataFrame (if required)
+df = pd.concat(chunks, ignore_index=True)
+
+# Extract coordinate columns and genes
+coords = df[['xcoord', 'ycoord', 'zcoord']]
+genes = df.columns[3:]  # Assuming the first 3 columns are coordinates
+
+# Define color options for overlay on greyscale
+color_options = {
+    'Black (Greyscale)': (0, 0, 0),
+    'Yellow': (1, 1, 0),
+    'Green': (0, 1, 0),
+    'Red': (1, 0, 0),
+    'Blue': (0, 0, 1)
+}
+
+# Create a Dash app
+app = dash.Dash(__name__)
+server = app.server  # Expose the underlying Flask server
+
+# Define the layout
+app.layout = html.Div([
+    html.H1("3D Single-Cell Gene Expression Viewer", style={'text-align': 'center'}),
+
+    html.Div([
+        # First gene settings
+        html.Div([
+            html.Label("Select the first gene:", style={'font-weight': 'bold'}),
+            dcc.Dropdown(
+                id='gene-dropdown-1',
+                options=[{'label': gene, 'value': gene} for gene in genes],
+                value=genes[0],  # Default value
+                style={'margin-bottom': '15px'}
+            ),
+            html.Label("Choose a color for the first gene:", style={'font-weight': 'bold'}),
+            dcc.Dropdown(
+                id='color-dropdown-1',
+                options=[{'label': color, 'value': color} for color in color_options.keys()],
+                value='Red',  # Default value
+                style={'margin-bottom': '15px'}
+            ),
+            html.Label("Set thresholds for visualizing the first gene:", style={'font-weight': 'bold'}),
+            html.Div([
+                dcc.Input(id='threshold-min-1', type='number', value=0, min=0, max=1, step=0.01,
+                          style={'width': '48%', 'margin-right': '5px'}),
+                dcc.Input(id='threshold-max-1', type='number', value=1, min=0, max=1, step=0.01,
+                          style={'width': '48%'})
+            ], style={'display': 'flex', 'margin-bottom': '15px'}),
+            html.Label("Set suppression threshold:", style={'font-weight': 'bold'}),
+            dcc.Input(id='suppression-threshold', type='number', value=0, min=0, max=1, step=0.01,
+                      style={'width': '100%', 'margin-bottom': '15px'})
+        ], style={'width': '48%', 'display': 'inline-block'}),
+
+        # Second gene settings
+        html.Div([
+            html.Label("Enable second gene visualization:", style={'font-weight': 'bold'}),
+            dcc.Checklist(
+                id='second-gene-checkbox',
+                options=[{'label': '', 'value': 'enable'}],
+                value=[],  # Default unchecked
+                style={'margin-bottom': '15px'}
+            ),
+            html.Div(id='second-gene-settings', children=[
+                html.Label("Select the second gene:", style={'font-weight': 'bold'}),
+                dcc.Dropdown(
+                    id='gene-dropdown-2',
+                    options=[{'label': gene, 'value': gene} for gene in genes],
+                    style={'margin-bottom': '15px'}
+                ),
+                html.Label("Choose a color for the second gene:", style={'font-weight': 'bold'}),
+                dcc.Dropdown(
+                    id='color-dropdown-2',
+                    options=[{'label': color, 'value': color} for color in color_options.keys()],
+                    value='Yellow',  # Default value
+                    style={'margin-bottom': '15px'}
+                ),
+                html.Label("Set thresholds for visualizing the second gene:", style={'font-weight': 'bold'}),
+                html.Div([
+                    dcc.Input(id='threshold-min-2', type='number', value=0, min=0, max=1, step=0.01,
+                              style={'width': '48%', 'margin-right': '5px'}),
+                    dcc.Input(id='threshold-max-2', type='number', value=1, min=0, max=1, step=0.01,
+                              style={'width': '48%'})
+                ], style={'display': 'flex', 'margin-bottom': '15px'})
+            ], style={'display': 'none'})
+        ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top'})
+    ], style={'display': 'flex', 'justify-content': 'space-between', 'margin-bottom': '30px'}),
+
+    # Axis filtering
+    html.Div([
+        html.Label("Filter x-axis:", style={'font-weight': 'bold'}),
+        dcc.RangeSlider(
+            id='x-slider',
+            min=coords['xcoord'].min(),
+            max=coords['xcoord'].max(),
+            value=[coords['xcoord'].min(), coords['xcoord'].max()]
+        ),
+        html.Label("Filter y-axis:", style={'font-weight': 'bold', 'margin-top': '15px'}),
+        dcc.RangeSlider(
+            id='y-slider',
+            min=coords['ycoord'].min(),
+            max=coords['ycoord'].max(),
+            value=[coords['ycoord'].min(), coords['ycoord'].max()]
+        ),
+        html.Label("Filter z-axis:", style={'font-weight': 'bold', 'margin-top': '15px'}),
+        dcc.RangeSlider(
+            id='z-slider',
+            min=coords['zcoord'].min(),
+            max=coords['zcoord'].max(),
+            value=[coords['zcoord'].min(), coords['zcoord'].max()]
+        ),
+        html.Button("Download Displayed Data", id='download-button', style={'margin-top': '15px'}),
+        dcc.Download(id="download-dataframe-csv")
+    ], style={'width': '90%', 'margin': 'auto', 'padding': '20px'}),
+
+    dcc.Graph(id='3d-scatter', style={'height': '600px'})
+])
+
+# Callback to show/hide the second gene settings
+@app.callback(
+    Output('second-gene-settings', 'style'),
+    Input('second-gene-checkbox', 'value')
+)
+def toggle_second_gene_settings(checkbox_value):
+    return {'display': 'block'} if 'enable' in checkbox_value else {'display': 'none'}
+
+@app.callback(
+    [Output('3d-scatter', 'figure'),
+     Output('download-dataframe-csv', 'data')],
+    [Input('gene-dropdown-1', 'value'),
+     Input('color-dropdown-1', 'value'),
+     Input('threshold-min-1', 'value'),
+     Input('threshold-max-1', 'value'),
+     Input('suppression-threshold', 'value'),
+     Input('x-slider', 'value'),
+     Input('y-slider', 'value'),
+     Input('z-slider', 'value'),
+     Input('second-gene-checkbox', 'value'),
+     Input('gene-dropdown-2', 'value'),
+     Input('color-dropdown-2', 'value'),
+     Input('threshold-min-2', 'value'),
+     Input('threshold-max-2', 'value')],
+    [State('download-button', 'n_clicks')]
+)
+def update_3d_scatter_and_download(
+        selected_gene1, color1, threshold_min1, threshold_max1, suppression_threshold,
+        x_range, y_range, z_range, second_gene_enabled, selected_gene2, color2, threshold_min2, threshold_max2,
+        download_clicks):
+    # Filter for axis ranges
+    filtered_df = df[
+        (df['xcoord'] >= x_range[0]) & (df['xcoord'] <= x_range[1]) &
+        (df['ycoord'] >= y_range[0]) & (df['ycoord'] <= y_range[1]) &
+        (df['zcoord'] >= z_range[0]) & (df['zcoord'] <= z_range[1])
+    ]
+
+    # Apply suppression threshold
+    if 'enable' in second_gene_enabled and selected_gene2:
+        filtered_df = filtered_df[
+            (filtered_df[selected_gene1] >= suppression_threshold) |
+            (filtered_df[selected_gene2] >= suppression_threshold)
+        ]
+    else:
+        filtered_df = filtered_df[filtered_df[selected_gene1] >= suppression_threshold]
+
+    # Normalize values for the first gene
+    norm_values1 = np.clip(
+        (filtered_df[selected_gene1] - threshold_min1) / (threshold_max1 - threshold_min1), 0, 1
+    ).to_numpy()
+    color_rgb1 = np.stack([norm_values1] * 3, axis=-1) if color1 == 'Black (Greyscale)' else np.array(
+        color_options[color1]) * norm_values1[:, None]
+
+    # Normalize values for the second gene, if enabled
+    color_rgb2 = 0
+    if 'enable' in second_gene_enabled and selected_gene2:
+        norm_values2 = np.clip(
+            (filtered_df[selected_gene2] - threshold_min2) / (threshold_max2 - threshold_min2), 0, 1
+        ).to_numpy()
+        color_rgb2 = np.stack([norm_values2] * 3, axis=-1) if color2 == 'Black (Greyscale)' else np.array(
+            color_options[color2]) * norm_values2[:, None]
+
+    # Blend colors
+    blended_colors = np.clip(color_rgb1 + color_rgb2, 0, 1)
+    blended_hex = [mcolors.to_hex(color) for color in blended_colors]
+
+    # Create 3D scatter trace
+    trace = go.Scatter3d(
+        x=filtered_df['xcoord'], y=filtered_df['ycoord'], z=filtered_df['zcoord'],
+        mode='markers', marker=dict(size=5, color=blended_hex)
+    )
+
+    # Prepare figure
+    figure = {'data': [trace], 'layout': go.Layout(scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'))}
+
+    # Check which input triggered the callback
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        triggered_id = None
+    else:
+        triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    # Only prepare download data if the download button was clicked
+    if triggered_id == 'download-button':
+        return figure, dcc.send_data_frame(filtered_df.to_csv, "filtered_data.csv")
+
+    return figure, None
+
+
+if __name__ == '__main__':
+    app.run_server(debug=False, port=8080)
